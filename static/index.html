@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ykc_websocket 报文监控</title>
+<style>
+  :root {
+    --bg: #1a1b1e;
+    --surface: #25262b;
+    --border: #373a40;
+    --text: #c1c2c5;
+    --text-dim: #909296;
+    --up: #4dabf7;
+    --up-bg: rgba(77, 171, 247, 0.08);
+    --down: #ffa94d;
+    --down-bg: rgba(255, 169, 77, 0.08);
+    --accent: #748ffc;
+    --danger: #ff6b6b;
+    --ok: #51cf66;
+    --warn: #ffd43b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- Header ---- */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
+  header .meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 14px; margin-left: auto; }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .status-dot.online { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .status-dot.offline { background: var(--danger); }
+
+  /* ---- Config Bar ---- */
+  .config-bar {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0 12px;
+  }
+  .config-bar input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: "JetBrains Mono", "Consolas", monospace;
+    outline: none;
+  }
+  .config-bar input:focus { border-color: var(--accent); }
+  .config-bar button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+  }
+  .config-bar button:hover { border-color: var(--accent); color: #fff; }
+
+  /* ---- Toolbar ---- */
+  .toolbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 20px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .toolbar button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .toolbar button:hover { border-color: var(--accent); color: #fff; }
+  .toolbar button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .toolbar .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+  .toolbar .count { font-size: 11px; color: var(--text-dim); margin-left: auto; }
+
+  /* ---- Main Layout ---- */
+  .main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- Table ---- */
+  .table-wrap {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    table-layout: fixed;
+  }
+  thead { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+  thead th {
+    padding: 6px 8px;
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .col-time { width: 96px; }
+  .col-dir { width: 52px; }
+  .col-type { width: 62px; }
+  .col-name { width: 150px; }
+  .col-summary { /* flex */ }
+  .col-crc { width: 40px; text-align: center; }
+  .col-len { width: 44px; text-align: right; }
+
+  tbody tr {
+    border-bottom: 1px solid rgba(55,58,64,0.4);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.row-up { background: var(--up-bg); }
+  tbody tr.row-down { background: var(--down-bg); }
+  tbody tr.row-up:hover { background: rgba(77,171,247,0.12); }
+  tbody tr.row-down:hover { background: rgba(255,169,77,0.12); }
+  tbody tr.selected { outline: 1px solid var(--accent); outline-offset: -1px; background: rgba(116,143,252,0.08); }
+
+  tbody td { padding: 4px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dir-tag { display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 10px; font-weight: 600; }
+  .dir-up { background: rgba(77,171,247,0.18); color: var(--up); }
+  .dir-down { background: rgba(255,169,77,0.18); color: var(--down); }
+  .crc-ok { color: var(--ok); }
+  .crc-fail { color: var(--danger); }
+  .enc-tag { color: var(--warn); font-size: 10px; margin-left: 3px; }
+
+  /* ---- Detail Panel ---- */
+  .detail-panel {
+    background: var(--surface);
+    border-top: 2px solid var(--border);
+    flex-shrink: 0;
+    display: none;
+    overflow: hidden;
+  }
+  .detail-panel.show { display: flex; }
+
+  .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 20px;
+    background: rgba(0,0,0,0.2);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .detail-header .close-btn {
+    margin-left: auto;
+    cursor: pointer;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    padding: 0 4px;
+  }
+  .detail-header .close-btn:hover { color: var(--text); }
+
+  .detail-body {
+    display: flex;
+    gap: 0;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .detail-hex {
+    flex: 1;
+    padding: 8px 16px;
+    font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    color: #a0a4ae;
+    white-space: pre;
+    border-right: 1px solid var(--border);
+    overflow-x: auto;
+  }
+
+  .detail-fields {
+    width: 280px;
+    flex-shrink: 0;
+    padding: 8px 16px;
+    font-size: 12px;
+    overflow-y: auto;
+  }
+  .detail-fields table { width: 100%; table-layout: auto; }
+  .detail-fields td {
+    padding: 2px 6px;
+    vertical-align: top;
+    white-space: normal;
+    word-break: break-all;
+    font-size: 11px;
+  }
+  .detail-fields .fkey { color: var(--text-dim); white-space: nowrap; }
+  .detail-fields .fval { color: var(--text); font-weight: 500; }
+
+  /* ---- Empty state ---- */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    gap: 10px;
+  }
+  .empty-state .icon { font-size: 42px; opacity: 0.25; }
+
+  /* ---- Scrollbar ---- */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ---- Footer ---- */
+  .footer-bar {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 3px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📡 ykc_websocket</h1>
+  <span style="font-size:12px;color:var(--text-dim)">报文监控</span>
+  <div class="config-bar">
+    <label style="font-size:11px;color:var(--text-dim)">目标平台</label>
+    <input id="cfgHost" type="text" value="114.55.7.88" style="width:130px" title="平台地址">
+    <span style="color:var(--text-dim)">:</span>
+    <input id="cfgPort" type="number" value="8776" style="width:58px" title="平台端口">
+    <button onclick="applyConfig()" style="font-size:11px;padding:2px 8px">连接</button>
+    <span id="cfgMsg" style="font-size:10px;color:var(--ok);display:none">✓</span>
+  </div>
+  <div class="meta">
+    <span><span class="status-dot offline" id="wsDot"></span>WebSocket</span>
+    <span id="sessInfo">会话: 0</span>
+    <span>⚡ v0.2.0</span>
+  </div>
+</header>
+
+<div class="toolbar">
+  <span style="font-size:11px;color:var(--text-dim)">方向:</span>
+  <button class="active" data-filter="all" onclick="setDirection('all', this)">全部</button>
+  <button data-filter="up" onclick="setDirection('up', this)">↑ 上行</button>
+  <button data-filter="down" onclick="setDirection('down', this)">↓ 下行</button>
+  <span class="sep"></span>
+  <span style="font-size:11px;color:var(--text-dim)">类型:</span>
+  <button data-frametype="all" class="active" onclick="setFrameType('all', this)">全部</button>
+  <button data-frametype="0x01-0x0A" onclick="setFrameType('0x01-0x0A', this)">注册/心跳</button>
+  <button data-frametype="0x13" onclick="setFrameType('0x13', this)">实时数据</button>
+  <button data-frametype="0x3B" onclick="setFrameType('0x3B', this)">交易记录</button>
+  <button data-frametype="0x31-0x36" onclick="setFrameType('0x31-0x36', this)">启停</button>
+  <button data-frametype="other" onclick="setFrameType('other', this)">其他</button>
+  <span class="sep"></span>
+  <button id="btnAutoScroll" class="active" onclick="toggleAutoScroll()">▼ 自动滚动</button>
+  <button onclick="clearTable()">清空</button>
+  <button onclick="exportCSV()">导出CSV</button>
+  <button id="btnE8to3B" onclick="toggleE8to3B()" style="border-color:var(--border)">E8→3B:关</button>
+  <span class="count" id="rowCount">0 条报文</span>
+</div>
+
+<div class="main-area">
+  <div class="table-wrap" id="tableWrap">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">📡</div>
+      <div>等待充电桩接入...</div>
+      <div style="font-size:11px">TCP 监听端口: <span id="tcpPort">8888</span></div>
+    </div>
+    <table id="msgTable" style="display:none">
+      <thead>
+        <tr>
+          <th class="col-time">时间</th>
+          <th class="col-dir">方向</th>
+          <th class="col-type">类型</th>
+          <th class="col-name">名称</th>
+          <th class="col-summary">概要</th>
+          <th class="col-crc">CRC</th>
+          <th class="col-len">字节</th>
+        </tr>
+      </thead>
+      <tbody id="msgBody"></tbody>
+    </table>
+  </div>
+
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <span id="detailTitle">报文详情</span>
+      <button class="close-btn" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div class="detail-hex" id="detailHex"></div>
+      <div class="detail-fields" id="detailFields"></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer-bar">
+  <span id="footerMsg">就绪</span>
+  <span style="margin-left:auto" id="footerStats">↑0 ↓0 共0条</span>
+</div>
+
+<script>
+// ---- 状态 ----
+let ws = null;
+let allFrames = [];
+let dirFilter = 'all';
+let typeFilter = 'all';
+let autoScroll = true;
+let selectedTr = null;
+let selectedFrame = null;
+
+// ---- DOM refs ----
+const wsDot = document.getElementById('wsDot');
+const sessInfo = document.getElementById('sessInfo');
+const msgTable = document.getElementById('msgTable');
+const msgBody = document.getElementById('msgBody');
+const emptyState = document.getElementById('emptyState');
+const tableWrap = document.getElementById('tableWrap');
+const rowCount = document.getElementById('rowCount');
+const detailPanel = document.getElementById('detailPanel');
+const detailHex = document.getElementById('detailHex');
+const detailFields = document.getElementById('detailFields');
+const detailTitle = document.getElementById('detailTitle');
+const footerMsg = document.getElementById('footerMsg');
+const btnAutoScroll = document.getElementById('btnAutoScroll');
+
+// ---- WebSocket ----
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  ws.onopen = () => {
+    wsDot.className = 'status-dot online';
+    footerMsg.textContent = 'WebSocket 已连接';
+  };
+  ws.onmessage = (evt) => {
+    try {
+      const frame = JSON.parse(evt.data);
+      allFrames.push(frame);
+      if (matchFilter(frame)) appendRow(frame);
+    } catch (e) { console.error('WS消息解析失败', e); }
+  };
+  ws.onclose = () => {
+    wsDot.className = 'status-dot offline';
+    footerMsg.textContent = 'WebSocket 断开，3秒后重连...';
+    setTimeout(connectWs, 3000);
+  };
+  ws.onerror = () => { wsDot.className = 'status-dot offline'; };
+}
+
+// ---- 过滤 ----
+function matchFilter(frame) {
+  if (dirFilter === 'up' && frame.direction !== 'up') return false;
+  if (dirFilter === 'down' && frame.direction !== 'down') return false;
+  if (typeFilter === 'all') return true;
+  const ft = parseInt(frame.frame_type);
+  if (typeFilter === '0x01-0x0A') return ft >= 0x01 && ft <= 0x0A;
+  if (typeFilter === '0x13') return ft === 0x13;
+  if (typeFilter === '0x3B') return ft === 0x3B;
+  if (typeFilter === '0x31-0x36') return ft >= 0x31 && ft <= 0x36;
+  if (typeFilter === 'other') {
+    if (ft >= 0x01 && ft <= 0x0A) return false;
+    if (ft === 0x13) return false;
+    if (ft === 0x3B) return false;
+    if (ft >= 0x31 && ft <= 0x36) return false;
+    return true;
+  }
+  return true;
+}
+
+function reapplyFilter() {
+  msgBody.innerHTML = '';
+  let count = 0;
+  for (const frame of allFrames) {
+    if (matchFilter(frame)) { appendRow(frame); count++; }
+  }
+  updateCount(count);
+  if (count === 0) {
+    msgTable.style.display = 'none';
+    emptyState.style.display = 'flex';
+    emptyState.querySelector('div:first-of-type').textContent = '📡';
+    emptyState.querySelector('div:last-of-type').textContent = '没有匹配的报文';
+  }
+}
+
+// ---- 表格行 ----
+function appendRow(frame) {
+  emptyState.style.display = 'none';
+  msgTable.style.display = '';
+
+  const tr = document.createElement('tr');
+  tr.className = frame.direction === 'up' ? 'row-up' : 'row-down';
+  tr.setAttribute('data-idx', allFrames.indexOf(frame));
+
+  const time = new Date(frame.timestamp * 1000);
+  const timeStr = time.toLocaleTimeString('zh-CN', { hour12: false }) +
+    '.' + String(time.getMilliseconds()).padStart(3, '0');
+
+  const encMark = frame.encrypted ? '<span class="enc-tag">ENC</span>' : '';
+  const crcClass = frame.crc_ok ? 'crc-ok' : 'crc-fail';
+  const crcText = frame.crc_ok ? '✓' : '✗';
+  const summary = escapeHtml(frame.summary || `LEN=${frame.data_length} SEQ=${frame.seq_no}`);
+
+  tr.innerHTML = `
+    <td class="col-time">${timeStr}</td>
+    <td class="col-dir"><span class="dir-tag ${frame.direction === 'up' ? 'dir-up' : 'dir-down'}">${frame.direction_label}</span></td>
+    <td class="col-type" style="font-family:monospace">${frame.frame_type}</td>
+    <td class="col-name">${frame.frame_name}${encMark}</td>
+    <td class="col-summary" style="color:var(--text-dim);font-size:11px">${summary}</td>
+    <td class="col-crc ${crcClass}">${crcText}</td>
+    <td class="col-len">${frame.raw_length}</td>
+  `;
+
+  tr.onclick = () => selectRow(frame, tr);
+  msgBody.appendChild(tr);
+  updateCount(msgBody.children.length);
+  updateStats();
+  if (autoScroll) tableWrap.scrollTop = tableWrap.scrollHeight;
+}
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function updateCount(n) { rowCount.textContent = n + ' 条报文'; }
+
+// ---- 详情面板 ----
+function selectRow(frame, tr) {
+  if (selectedTr) selectedTr.classList.remove('selected');
+  selectedTr = tr;
+  selectedFrame = frame;
+  tr.classList.add('selected');
+
+  detailPanel.classList.add('show');
+  detailTitle.textContent = `${frame.frame_name}  ${frame.frame_type}  ${frame.direction_label}  SEQ=${frame.seq_no}  ${frame.raw_length} bytes`;
+
+  // Hex dump
+  detailHex.textContent = frame.hex_dump || frame.hex;
+
+  // 解析字段
+  const fields = frame.fields || {};
+  let fieldsHtml = '<table>';
+  if (fields._encrypted) {
+    fieldsHtml += '<tr><td class="fkey" colspan="2" style="color:var(--warn)">🔒 ' + escapeHtml(fields._note || '') + '</td></tr>';
+  } else if (Object.keys(fields).length === 0) {
+    fieldsHtml += '<tr><td class="fkey" style="color:var(--text-dim)">无解析字段</td></tr>';
+  } else {
+    for (const [k, v] of Object.entries(fields)) {
+      if (k.startsWith('_')) continue;
+      fieldsHtml += `<tr><td class="fkey">${escapeHtml(k)}</td><td class="fval">${escapeHtml(String(v))}</td></tr>`;
+    }
+  }
+  fieldsHtml += '</table>';
+  detailFields.innerHTML = fieldsHtml;
+
+  footerMsg.textContent = `已选中: ${frame.frame_name} | ${frame.frame_type}`;
+}
+
+function closeDetail() {
+  detailPanel.classList.remove('show');
+  if (selectedTr) { selectedTr.classList.remove('selected'); selectedTr = null; }
+  selectedFrame = null;
+  footerMsg.textContent = '就绪';
+}
+
+// ---- 工具栏 ----
+function setDirection(dir, btn) {
+  dirFilter = dir;
+  document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  reapplyFilter();
+}
+
+function setFrameType(ft, btn) {
+  typeFilter = ft;
+  document.querySelectorAll('[data-frametype]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  reapplyFilter();
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  btnAutoScroll.classList.toggle('active', autoScroll);
+  btnAutoScroll.textContent = autoScroll ? '▼ 自动滚动' : '▶ 自动滚动';
+}
+
+function clearTable() {
+  allFrames = [];
+  msgBody.innerHTML = '';
+  closeDetail();
+  updateCount(0);
+  updateStats();
+  msgTable.style.display = 'none';
+  emptyState.style.display = 'flex';
+  emptyState.querySelector('div:first-of-type').textContent = '📡';
+  emptyState.querySelector('div:last-of-type').textContent = '已清空';
+}
+
+// ---- 导出 CSV ----
+function exportCSV() {
+  if (allFrames.length === 0) return;
+  const header = '时间,方向,帧类型,帧名称,SEQ,长度,CRC,加密,Hex\n';
+  const rows = allFrames.map(f => {
+    const time = new Date(f.timestamp * 1000).toLocaleTimeString('zh-CN', { hour12: false });
+    return [time, f.direction_label, f.frame_type, f.frame_name, f.seq_no, f.raw_length, f.crc_ok ? 'OK' : 'FAIL', f.encrypted ? 'Y' : 'N', f.hex].join(',');
+  }).join('\n');
+  const csv = '\uFEFF' + header + rows;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ykc_ws_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  footerMsg.textContent = `已导出 ${allFrames.length} 条报文`;
+}
+
+// ---- 统计 ----
+function updateStats() {
+  const total = allFrames.length;
+  const up = allFrames.filter(f => f.direction === 'up').length;
+  const down = allFrames.filter(f => f.direction === 'down').length;
+  const crcFail = allFrames.filter(f => !f.crc_ok).length;
+  let statsHtml = `↑${up} ↓${down} 共${total}条`;
+  if (crcFail > 0) statsHtml += ` | <span style="color:var(--danger)">CRC错误:${crcFail}</span>`;
+  document.getElementById('footerStats').innerHTML = statsHtml;
+}
+
+// ---- 配置 ----
+async function loadConfig() {
+  try {
+    const resp = await fetch('/api/config');
+    const data = await resp.json();
+    document.getElementById('cfgHost').value = data.platform_host;
+    document.getElementById('cfgPort').value = data.platform_port;
+  } catch (e) {}
+  // 加载 E8→3B 状态
+  try {
+    const resp = await fetch('/api/e8to3b');
+    const data = await resp.json();
+    updateE8to3BButton(data.enabled);
+  } catch (e) {}
+}
+
+async function applyConfig() {
+  const host = document.getElementById('cfgHost').value.trim();
+  const port = parseInt(document.getElementById('cfgPort').value);
+  if (!host || !port) return;
+
+  const msgEl = document.getElementById('cfgMsg');
+  msgEl.style.display = 'inline';
+  msgEl.textContent = '...';
+  msgEl.style.color = 'var(--warn)';
+
+  try {
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform_host: host, platform_port: port }),
+    });
+    if (resp.ok) {
+      msgEl.textContent = '✓';
+      msgEl.style.color = 'var(--ok)';
+      footerMsg.textContent = `平台已切换至 ${host}:${port}`;
+    } else {
+      msgEl.textContent = '✗';
+      msgEl.style.color = 'var(--danger)';
+    }
+  } catch (e) {
+    msgEl.textContent = '✗';
+    msgEl.style.color = 'var(--danger)';
+  }
+  // 保持显示，不再自动隐藏
+}
+
+// ---- E8→3B 转换 ----
+function updateE8to3BButton(enabled) {
+  const btn = document.getElementById('btnE8to3B');
+  if (enabled) {
+    btn.textContent = 'E8→3B:开';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = 'E8→3B:关';
+    btn.classList.remove('active');
+  }
+}
+
+async function toggleE8to3B() {
+  const btn = document.getElementById('btnE8to3B');
+  const current = btn.classList.contains('active');
+  try {
+    const resp = await fetch('/api/e8to3b', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !current }),
+    });
+    const data = await resp.json();
+    updateE8to3BButton(data.enabled);
+    footerMsg.textContent = data.enabled 
+      ? 'E8→3B 转换已开启，收到0xE8时将自动生成0x3B发送'
+      : 'E8→3B 转换已关闭';
+  } catch (e) {
+    footerMsg.textContent = '切换失败';
+  }
+}
+
+async function pollStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    sessInfo.textContent = `会话: ${data.sessions}`;
+    if (data.tcp_listen) {
+      document.getElementById('tcpPort').textContent = data.tcp_listen;
+    }
+  } catch (e) {}
+}
+
+// ---- 键盘快捷键 ----
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeDetail();
+});
+
+// ---- 启动 ----
+connectWs();
+loadConfig();
+setInterval(pollStatus, 5000);
+</script>
+</body>
+</html>
