@@ -29,6 +29,7 @@ class TcpServer:
         self.platform_port: int = 8776
         # E8→3B 转换开关
         self.e8_to_3b_enabled: bool = False
+        self.local_bind: str | None = None  # 多网卡时绑定出网IP
         # 帧日志文件
         self._log_path = os.path.join(os.path.dirname(__file__), "logs", f"frames_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
         os.makedirs(os.path.dirname(self._log_path), exist_ok=True)
@@ -79,6 +80,17 @@ class TcpServer:
             session.e8_to_3b = enabled
             logger.info(f"[{session.session_id}] E8→3B 开关已{'开启' if enabled else '关闭'}")
 
+    async def rebind(self, new_port: int):
+        """更换监听端口（停旧起新，不影响现有连接）"""
+        old_server = self._server
+        self.port = new_port
+        self._server = await asyncio.start_server(
+            self._handle_client, self.host, self.port
+        )
+        if old_server:
+            old_server.close()
+        logger.info(f"TCP Server 已切换至: {self.host}:{self.port}")
+
     async def _handle_client(self, reader: StreamReader, writer: StreamWriter):
         """处理新的充电桩 TCP 连接"""
         self._counter += 1
@@ -95,6 +107,7 @@ class TcpServer:
             platform_port=self.platform_port,
             on_frame=self.log_frame,
             e8_to_3b=self.e8_to_3b_enabled,
+            local_bind=self.local_bind,
         )
         self._sessions[session_id] = session
 

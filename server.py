@@ -114,6 +114,7 @@ async def status():
         "tcp_listen": f"{TCP_LISTEN_HOST}:{TCP_LISTEN_PORT}",
         "platform_host": tcp_server.platform_host,
         "platform_port": tcp_server.platform_port,
+        "local_bind": tcp_server.local_bind or "",
     }
 
 
@@ -133,6 +134,7 @@ async def get_config():
     return {
         "platform_host": tcp_server.platform_host,
         "platform_port": tcp_server.platform_port,
+        "local_bind": tcp_server.local_bind or "",
     }
 
 
@@ -166,6 +168,30 @@ async def toggle_e8to3b(data: dict):
 
 
 # ---- 入口 ----
+
+
+
+# ---- TCP 端口切换 ----
+
+@app.post("/api/tcp-port")
+async def change_tcp_port(data: dict):
+    new_port = data.get("port", 9100)
+    logger.info(f"更换监听端口: {new_port}")
+    await tcp_server.rebind(new_port)
+    global TCP_LISTEN_PORT
+    TCP_LISTEN_PORT = new_port
+    print(f"[TCP] 监听已切换至: {new_port}")
+    return {"ok": True, "port": new_port}
+
+
+@app.post("/api/local-bind")
+async def set_local_bind(data: dict):
+    ip = data.get("ip", "").strip() or None
+    tcp_server.local_bind = ip
+    for s in tcp_server._sessions.values():
+        s.local_bind = ip
+    logger.info(f"出网IP绑定: {ip or '已清除(默认路由)'}")
+    return {"ok": True, "local_bind": tcp_server.local_bind}
 
 if __name__ == "__main__":
     import uvicorn

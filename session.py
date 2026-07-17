@@ -5,6 +5,7 @@ Session 管理：充电桩连接与平台连接的生命周期绑定。
 
 import asyncio
 import logging
+import socket
 import struct
 from asyncio import StreamReader, StreamWriter
 
@@ -98,7 +99,7 @@ def convert_e8_to_3b(e8_raw: bytes) -> bytes | None:
 class Session:
     """一个充电桩会话"""
 
-    def __init__(self, pile_reader: StreamReader, pile_writer: StreamWriter, ws_queue: asyncio.Queue, session_id: str, platform_host: str = "114.55.7.88", platform_port: int = 8776, on_frame: callable = None, e8_to_3b: bool = False):
+    def __init__(self, pile_reader: StreamReader, pile_writer: StreamWriter, ws_queue: asyncio.Queue, session_id: str, platform_host: str = "114.55.7.88", platform_port: int = 8776, on_frame: callable = None, e8_to_3b: bool = False, local_bind: str = None):
         self.session_id = session_id
         self.pile_reader = pile_reader
         self.pile_writer = pile_writer
@@ -108,7 +109,8 @@ class Session:
         self.platform_host = platform_host
         self.platform_port = platform_port
         self.on_frame = on_frame  # 帧日志回调
-        self.e8_to_3b = e8_to_3b  # 是否将 0xE8 转为 0x3B
+        self.e8_to_3b = e8_to_3b
+        self.local_bind = local_bind  # 多网卡时绑定出网IP
         self.parser = FrameParser()
         self._pile_addr = pile_writer.get_extra_info("peername")
         self._running = False
@@ -174,9 +176,17 @@ class Session:
         for attempt in range(1, PLATFORM_RECONNECT_MAX + 1):
             try:
                 self.platform_reader, self.platform_writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.platform_host, self.platform_port),
+                    asyncio.open_connection(self.platform_host, self.platform_port, local_addr=(self.local_bind, 0) if self.local_bind else None),
                     timeout=10,
                 )
+                # TCP keepalive
+                sock = self.platform_writer.get_extra_info("socket")
+                if sock:
+                    try:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        sock.setsockopt(socket.IPPROTO_TCP, 0x2001, 30)  # 30s idle
+                    except Exception:
+                        pass
                 return True
             except Exception as e:
                 logger.warning(f"[{self.session_id}] 平台连接失败 (尝试 {attempt}/{PLATFORM_RECONNECT_MAX}): {e}")
@@ -260,8 +270,16 @@ class Session:
             while self._running:
                 data = await self.platform_reader.read(4096)
                 if not data:
-                    logger.info(f"[{self.session_id}] 平台连接断开")
-                    break
+                    logger.warning(f"[{self.session_id}] 平台连接断开，尝试重连...")
+                    self.platform_writer.close()
+                    self.platform_writer = None
+                    self.platform_reader = None
+                    if await self._connect_platform():
+                        logger.info(f"[{self.session_id}] 平台重连成功")
+                        continue
+                    else:
+                        logger.error(f"[{self.session_id}] 平台重连失败，关闭会话")
+                        break
 
                 # 0. 原始数据日志（前64字节）
                 preview = data[:64].hex(" ").upper()

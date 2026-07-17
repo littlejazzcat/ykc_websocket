@@ -267,17 +267,25 @@
   <h1>📡 ykc_websocket</h1>
   <span style="font-size:12px;color:var(--text-dim)">报文监控</span>
   <div class="config-bar">
+    <label style="font-size:11px;color:var(--text-dim)">监听</label>
+    <input id="cfgListenPort" type="number" value="8776" style="width:52px" title="TCP监听端口">
+    <button onclick="applyListenPort()" style="font-size:11px;padding:2px 6px">改</button>
+    <span class="sep"></span>
     <label style="font-size:11px;color:var(--text-dim)">目标平台</label>
-    <input id="cfgHost" type="text" value="114.55.7.88" style="width:130px" title="平台地址">
+    <input id="cfgHost" type="text" value="114.55.7.88" style="width:120px" title="平台地址">
     <span style="color:var(--text-dim)">:</span>
-    <input id="cfgPort" type="number" value="8776" style="width:58px" title="平台端口">
+    <input id="cfgPort" type="number" value="8776" style="width:52px" title="平台端口">
     <button onclick="applyConfig()" style="font-size:11px;padding:2px 8px">连接</button>
+    <span class="sep"></span>
+    <label style="font-size:11px;color:var(--text-dim)">出网IP</label>
+    <input id="cfgBind" type="text" placeholder="默认" style="width:100px" title="多网卡时绑定出网IP">
+    <button onclick="applyBind()" style="font-size:11px;padding:2px 6px">绑</button>
     <span id="cfgMsg" style="font-size:10px;color:var(--ok);display:none">✓</span>
   </div>
   <div class="meta">
     <span><span class="status-dot offline" id="wsDot"></span>WebSocket</span>
     <span id="sessInfo">会话: 0</span>
-    <span>⚡ v0.2.0</span>
+    <span>⚡ v1.0.0</span>
   </div>
 </header>
 
@@ -439,8 +447,6 @@ function appendRow(frame) {
     '.' + String(time.getMilliseconds()).padStart(3, '0');
 
   const encMark = frame.encrypted ? '<span class="enc-tag">ENC</span>' : '';
-  const crcClass = frame.crc_ok ? 'crc-ok' : 'crc-fail';
-  const crcText = frame.crc_ok ? '✓' : '✗';
   const summary = escapeHtml(frame.summary || `LEN=${frame.data_length} SEQ=${frame.seq_no}`);
 
   tr.innerHTML = `
@@ -449,7 +455,7 @@ function appendRow(frame) {
     <td class="col-type" style="font-family:monospace">${frame.frame_type}</td>
     <td class="col-name">${frame.frame_name}${encMark}</td>
     <td class="col-summary" style="color:var(--text-dim);font-size:11px">${summary}</td>
-    <td class="col-crc ${crcClass}">${crcText}</td>
+    <td class="col-crc" style="font-family:monospace;font-size:11px;color:var(--text-dim)">${frame.crc || ''}</td>
     <td class="col-len">${frame.raw_length}</td>
   `;
 
@@ -578,11 +584,44 @@ async function loadConfig() {
     document.getElementById('cfgHost').value = data.platform_host;
     document.getElementById('cfgPort').value = data.platform_port;
   } catch (e) {}
-  // 加载 E8→3B 状态
   try {
     const resp = await fetch('/api/e8to3b');
     const data = await resp.json();
     updateE8to3BButton(data.enabled);
+  } catch (e) {}
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    document.getElementById('cfgListenPort').value = parseInt(data.tcp_listen.split(':').pop()) || 8776;
+  } catch (e) {}
+}
+
+async function applyListenPort() {
+  const port = parseInt(document.getElementById('cfgListenPort').value);
+  if (!port) return;
+  try {
+    const resp = await fetch('/api/tcp-port', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port }),
+    });
+    if (resp.ok) {
+      footerMsg.textContent = 'TCP 监听端口已切换至 ' + port;
+    }
+  } catch (e) {
+    footerMsg.textContent = '端口切换失败';
+  }
+}
+
+async function applyBind() {
+  const ip = document.getElementById('cfgBind').value.trim();
+  try {
+    await fetch('/api/local-bind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip || null }),
+    });
+    footerMsg.textContent = ip ? '出网IP已绑定: ' + ip : '出网IP已清除(默认路由)';
   } catch (e) {}
 }
 
