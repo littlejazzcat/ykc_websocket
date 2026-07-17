@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import webbrowser
 import signal
 from contextlib import asynccontextmanager
 
@@ -170,7 +171,7 @@ if __name__ == "__main__":
     import uvicorn
 
     print("=" * 50)
-    print("  ykc_websocket 报文监控中转工具")
+    print("  ykc_websocket 充电桩报文监控中转工具")
     print("=" * 50)
     print(f"  TCP 监听:    {TCP_LISTEN_HOST}:{TCP_LISTEN_PORT}")
     print(f"  Web 界面:    http://localhost:8080")
@@ -178,13 +179,8 @@ if __name__ == "__main__":
     print(f"  按 Ctrl+C 退出")
     print("=" * 50)
 
-    def _handle_signal(sig, frame):
-        print("\n正在关闭...")
-        shutdown_event.set()
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
-    server = uvicorn.Server(config)
-    server.run()
+    webbrowser.open("http://localhost:8080")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    except KeyboardInterrupt:
+        print("\n已退出")

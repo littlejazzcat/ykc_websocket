@@ -18,8 +18,22 @@ CRC_POLY = 0x180D  # CRC16 多项式
 # CRC16 查表法
 # ============================================================
 
-# 码表来自官方协议文档（多项式 0x180D）
-_CRC_TABLE_HIGH = [
+# 表1: 运行时动态生成（用于解析真实帧，匹配桩端 CRC）
+def _build_crc16_table() -> tuple[list[int], list[int]]:
+    table_low, table_high = [], []
+    for i in range(256):
+        crc = i << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ CRC_POLY) if crc & 0x8000 else (crc << 1)
+            crc &= 0xFFFF
+        table_high.append((crc >> 8) & 0xFF)
+        table_low.append(crc & 0xFF)
+    return table_high, table_low
+
+_CRC_TABLE_HIGH_RUNTIME, _CRC_TABLE_LOW_RUNTIME = _build_crc16_table()
+
+# 表2: 官方协议文档（用于生成 0x3B 转换帧，匹配平台端 CRC）
+_CRC_TABLE_HIGH_DOC = [
     0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0,
     0x80, 0x41, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41,
     0x00, 0xC1, 0x81, 0x40, 0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0,
@@ -47,7 +61,7 @@ _CRC_TABLE_HIGH = [
     0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0,
     0x80, 0x41, 0x00, 0xC1, 0x81, 0x40]
 
-_CRC_TABLE_LOW = [
+_CRC_TABLE_LOW_DOC = [
     0x00, 0xC0, 0xC1, 0x01, 0xC3, 0x03, 0x02, 0xC2, 0xC6, 0x06,
     0x07, 0xC7, 0x05, 0xC5, 0xC4, 0x04, 0xCC, 0x0C, 0x0D, 0xCD,
     0x0F, 0xCF, 0xCE, 0x0E, 0x0A, 0xCA, 0xCB, 0x0B, 0xC9, 0x09,
@@ -77,14 +91,23 @@ _CRC_TABLE_LOW = [
 
 
 def crc16(data: bytes) -> int:
-    """计算 CRC16 校验值（多项式 0x180D），返回 (高字节 << 8 | 低字节)"""
-    crc_high = 0xFF
-    crc_low = 0xFF
+    """CRC16 运行时码表（用于解析真实帧）"""
+    hi, lo = 0xFF, 0xFF
     for byte in data:
-        idx = crc_high ^ byte
-        crc_high = crc_low ^ _CRC_TABLE_HIGH[idx]
-        crc_low = _CRC_TABLE_LOW[idx]
-    return (crc_high << 8) | crc_low
+        idx = hi ^ byte
+        hi = lo ^ _CRC_TABLE_HIGH_RUNTIME[idx]
+        lo = _CRC_TABLE_LOW_RUNTIME[idx]
+    return (hi << 8) | lo
+
+
+def crc16_doc(data: bytes) -> int:
+    """CRC16 文档码表（用于生成 0x3B 转换帧）"""
+    hi, lo = 0xFF, 0xFF
+    for byte in data:
+        idx = hi ^ byte
+        hi = lo ^ _CRC_TABLE_HIGH_DOC[idx]
+        lo = _CRC_TABLE_LOW_DOC[idx]
+    return (hi << 8) | lo
 
 
 def crc16_verify(data: bytes, expected: int) -> bool:
@@ -252,7 +275,7 @@ def _parse_0x03(body: bytes) -> dict:
 
 def _parse_0x13(body: bytes) -> dict:
     """0x13 上传实时监测数据"""
-    if len(body) < 38:
+    if len(body) < 60:
         return _parse_common(body)
     state_map = {0x00: "离线", 0x01: "故障", 0x02: "空闲", 0x03: "充电"}
     plug_map = {0x00: "否", 0x01: "是", 0x02: "未知"}
@@ -266,12 +289,13 @@ def _parse_0x13(body: bytes) -> dict:
         "输出电压(V)": round(int.from_bytes(body[27:29], "little") / 10, 1),
         "输出电流(A)": round(int.from_bytes(body[29:31], "little") / 10, 1),
         "枪线温度(℃)": body[31] - 50,
-        "SOC(%)": body[39],
-        "电池最高温度(℃)": body[40] - 50 if body[40] else 0,
-        "累计充电时间(min)": int.from_bytes(body[41:43], "little"),
-        "剩余时间(min)": int.from_bytes(body[43:45], "little"),
-        "充电度数(kWh)": round(int.from_bytes(body[45:49], "little") / 10000, 4),
-        "已充金额(元)": round(int.from_bytes(body[53:57], "little") / 10000, 4),
+        # 枪线编码(8B) → offset 32-39, 跳过不展示
+        "SOC(%)": body[40],
+        "电池最高温度(℃)": body[41] - 50 if body[41] else 0,
+        "累计充电时间(min)": int.from_bytes(body[42:44], "little"),
+        "剩余时间(min)": int.from_bytes(body[44:46], "little"),
+        "充电度数(kWh)": round(int.from_bytes(body[46:50], "little") / 10000, 4),
+        "已充金额(元)": round(int.from_bytes(body[54:58], "little") / 10000, 4),
     }
 
 

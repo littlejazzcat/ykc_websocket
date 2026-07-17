@@ -8,7 +8,7 @@ import logging
 import struct
 from asyncio import StreamReader, StreamWriter
 
-from protocol import FrameParser, ParsedFrame, FRAME_HEADER, crc16
+from protocol import FrameParser, ParsedFrame, FRAME_HEADER, crc16, crc16_doc
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def convert_e8_to_3b(e8_raw: bytes) -> bytes | None:
         # 构建完整帧
         seq = 1
         data_domain = struct.pack("<H", seq) + b"\x00" + b"\x3B" + bytes(body_3b)
-        crc = crc16(data_domain)
+        crc = crc16_doc(data_domain)
         raw = bytes([FRAME_HEADER, len(data_domain)]) + data_domain + struct.pack(">H", crc)
         logger.info(f"E8→3B: data_len={len(data_domain)}(0x{len(data_domain):02X}) CRC=0x{crc:04X} hex={raw.hex(' ').upper()}")
         return raw
